@@ -81,10 +81,12 @@ def test_sp_threshold_uses_profile_only_when_user_did_not_set_it():
     profile.sequence_parallelism_min_token_num.return_value = 1024
     with (
         patch("vllm_ascend.platform.get_current_hardware_profile", return_value=profile),
+        patch("vllm_ascend.platform.is_moe_model", return_value=False),
         patch("vllm_ascend.platform._get_default_max_cudagraph_capture_size", return_value=None),
     ):
         NPUPlatform.apply_config_platform_defaults(config)
     assert pass_config.sp_min_token_num == 1024
+    profile.sequence_parallelism_min_token_num.assert_called_once_with(8192, 2, 2, is_moe=False)
 
     pass_config.sp_min_token_num = 512
     with patch("vllm_ascend.platform._get_default_max_cudagraph_capture_size", return_value=None):

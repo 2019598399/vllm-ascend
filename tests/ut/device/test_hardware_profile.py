@@ -18,6 +18,7 @@ from vllm_ascend.device.hardware_profile import (
     HardwareCapability,
     MoECommPolicy,
     QuantizationBackendFamily,
+    SequenceParallelismThresholdPolicy,
     WeightLayoutPolicy,
     get_current_hardware_profile,
     get_hardware_profile,
@@ -233,11 +234,36 @@ def test_every_device_type_has_a_profile() -> None:
         assert get_hardware_profile(device_type)._device_type is device_type
 
 
-def test_sequence_parallelism_threshold_uses_fallback_then_calibration() -> None:
+def test_sequence_parallelism_threshold_uses_model_class_fallbacks_then_calibration() -> None:
     profile = get_hardware_profile(AscendDeviceType.A3)
     # 8 MiB * TP2 / (hidden_size 8192 * BF16 2 bytes).
-    assert profile.sequence_parallelism_min_token_num(8192, 2, 2) == 1024
+    assert profile.sequence_parallelism_min_token_num(8192, 2, 2, is_moe=True) == 1024
+    # Legacy dense FlashComm used ``num_tokens > 1000``.
+    assert profile.sequence_parallelism_min_token_num(8192, 2, 2, is_moe=False) == 1001
 
-    calibrated = replace(profile, sp_min_activation_bytes_per_rank=16 * 1024 * 1024)
-    assert calibrated.sequence_parallelism_min_token_num(8192, 2, 2) == 2048
-    assert calibrated.sequence_parallelism_min_token_num(8192, 2, 4) == 1024
+    calibrated = replace(
+        profile,
+        dense_sp_threshold_policy=SequenceParallelismThresholdPolicy(min_token_num=512),
+        moe_sp_threshold_policy=SequenceParallelismThresholdPolicy(
+            min_activation_bytes_per_rank=16 * 1024 * 1024
+        ),
+    )
+    assert calibrated.sequence_parallelism_min_token_num(8192, 2, 2, is_moe=False) == 512
+    assert calibrated.sequence_parallelism_min_token_num(8192, 2, 2, is_moe=True) == 2048
+    assert calibrated.sequence_parallelism_min_token_num(8192, 2, 4, is_moe=True) == 1024
+
+
+@pytest.mark.parametrize(
+    "policy",
+    [
+        SequenceParallelismThresholdPolicy(),
+        SequenceParallelismThresholdPolicy(min_token_num=1, min_activation_bytes_per_rank=1),
+        SequenceParallelismThresholdPolicy(min_token_num=0),
+        SequenceParallelismThresholdPolicy(min_activation_bytes_per_rank=0),
+    ],
+)
+def test_sequence_parallelism_threshold_policy_rejects_invalid_values(
+    policy: SequenceParallelismThresholdPolicy,
+) -> None:
+    with pytest.raises(ValueError):
+        policy.min_token_num_for(8192, 2, 2)

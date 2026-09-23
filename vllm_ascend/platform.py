@@ -337,8 +337,8 @@ class NPUPlatform(Platform):
         """Apply Ascend-specific defaults."""
 
         # Upstream derives this threshold only for CUDA/XPU. Ascend keeps the
-        # user value when supplied; otherwise the hardware profile provides a
-        # calibrated policy, or its temporary 8 MiB fallback.
+        # user value when supplied; otherwise the hardware profile selects a
+        # calibrated or model-class-specific fallback policy.
         pass_config = vllm_config.compilation_config.pass_config
         if (pass_config.enable_sp or pass_config.fuse_gemm_comms) and pass_config.sp_min_token_num is None:
             model_config = vllm_config.model_config
@@ -348,6 +348,7 @@ class NPUPlatform(Platform):
                     model_config.get_hidden_size(),
                     vllm_config.parallel_config.tensor_parallel_size,
                     model_config.dtype.itemsize,
+                    is_moe=is_moe_model(vllm_config),
                 )
 
         default_max_cg_capture_size = _get_default_max_cudagraph_capture_size(vllm_config)

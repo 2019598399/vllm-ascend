@@ -16,6 +16,43 @@ from vllm_ascend.device.hardware import AscendDeviceType
 # Temporary policy used until a hardware profile receives an NPU benchmarked
 # crossover point. Keep this at the profile layer rather than in vLLM config.
 _SP_MIN_ACTIVATION_BYTES_PER_RANK_FALLBACK = 8 * 1024 * 1024
+_DENSE_SP_MIN_TOKEN_NUM_FALLBACK = 1001
+
+
+@dataclass(frozen=True, slots=True)
+class SequenceParallelismThresholdPolicy:
+    """A calibrated sequence-parallel threshold policy for one model class."""
+
+    min_token_num: int | None = None
+    min_activation_bytes_per_rank: int | None = None
+
+    def min_token_num_for(
+        self,
+        hidden_size: int,
+        tp_size: int,
+        element_size: int,
+    ) -> int:
+        """Calculate a token threshold from exactly one policy representation."""
+        assert hidden_size > 0 and tp_size > 0 and element_size > 0
+        if (self.min_token_num is None) == (self.min_activation_bytes_per_rank is None):
+            raise ValueError("SP threshold policy requires exactly one threshold representation")
+        if self.min_token_num is not None:
+            if self.min_token_num < 1:
+                raise ValueError("SP minimum token threshold must be positive")
+            return self.min_token_num
+
+        assert self.min_activation_bytes_per_rank is not None
+        if self.min_activation_bytes_per_rank < 1:
+            raise ValueError("SP minimum activation bytes must be positive")
+        return max(1, self.min_activation_bytes_per_rank * tp_size // (hidden_size * element_size))
+
+
+_DENSE_SP_FALLBACK_POLICY = SequenceParallelismThresholdPolicy(
+    min_token_num=_DENSE_SP_MIN_TOKEN_NUM_FALLBACK
+)
+_MOE_SP_FALLBACK_POLICY = SequenceParallelismThresholdPolicy(
+    min_activation_bytes_per_rank=_SP_MIN_ACTIVATION_BYTES_PER_RANK_FALLBACK
+)
 
 
 class HardwareCapability(Enum):
@@ -134,8 +171,9 @@ class HardwareProfile:
     quantization_backend_family: QuantizationBackendFamily
     capabilities: frozenset[HardwareCapability]
     # Set after an NPU benchmark establishes the SP/MMRS crossover point.
-    # ``None`` deliberately selects the documented temporary fallback.
-    sp_min_activation_bytes_per_rank: int | None = None
+    # ``None`` deliberately selects the model-class-specific fallback.
+    dense_sp_threshold_policy: SequenceParallelismThresholdPolicy | None = None
+    moe_sp_threshold_policy: SequenceParallelismThresholdPolicy | None = None
 
     def supports(self, capability: HardwareCapability) -> bool:
         """Return whether this hardware family provides ``capability``."""
@@ -147,19 +185,14 @@ class HardwareProfile:
         hidden_size: int,
         tp_size: int,
         element_size: int,
+        *,
+        is_moe: bool,
     ) -> int:
-        """Return the SP threshold from this profile's calibrated policy.
-
-        The threshold is expressed in tokens, while calibration is stored as
-        the minimum activation bytes per TP rank. This keeps one policy useful
-        for different hidden sizes, dtypes, and tensor-parallel sizes.
-        """
-        assert hidden_size > 0 and tp_size > 0 and element_size > 0
-        activation_bytes = self.sp_min_activation_bytes_per_rank
-        if activation_bytes is None:
-            activation_bytes = _SP_MIN_ACTIVATION_BYTES_PER_RANK_FALLBACK
-        assert activation_bytes > 0
-        return max(1, activation_bytes * tp_size // (hidden_size * element_size))
+        """Return the calibrated or fallback SP threshold for this model class."""
+        policy = self.moe_sp_threshold_policy if is_moe else self.dense_sp_threshold_policy
+        if policy is None:
+            policy = _MOE_SP_FALLBACK_POLICY if is_moe else _DENSE_SP_FALLBACK_POLICY
+        return policy.min_token_num_for(hidden_size, tp_size, element_size)
 
 
 _STANDARD_CAPABILITIES = frozenset(
