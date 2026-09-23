@@ -225,6 +225,14 @@ class AscendCommonAttentionMetadata(CommonAttentionMetadata):
     For many of the tensors we keep both NPU and CPU versions.
     """
 
+    # These host mirrors were removed or renamed upstream, but Ascend's
+    # async/spec-decode paths still use them as the authoritative CPU state.
+    # Keep them on the subclass so upgrading the upstream metadata dataclass
+    # does not silently remove the constructor arguments or attributes.
+    _seq_lens_cpu: torch.Tensor | None = None
+    _num_computed_tokens_cpu: torch.Tensor | None = None
+    dcp_local_seq_lens_cpu: torch.Tensor | None = None
+
     # CPU tensor of sequence lengths for host-side operations.
     # E.g., tensor([128, 256, 64]) for 3 requests with different seq lengths.
     seq_lens_cpu: torch.Tensor = None

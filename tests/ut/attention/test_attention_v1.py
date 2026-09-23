@@ -1,3 +1,4 @@
+import inspect
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -125,6 +126,13 @@ class TestAscendAttentionBackend(TestBase):
 
 
 class TestAscendAttentionMetadataBuilder(TestBase):
+    def test_metadata_constructor_keeps_legacy_cpu_mirrors(self):
+        parameters = inspect.signature(AscendCommonAttentionMetadata).parameters
+
+        assert "_seq_lens_cpu" in parameters
+        assert "_num_computed_tokens_cpu" in parameters
+        assert "dcp_local_seq_lens_cpu" in parameters
+
     def setUp(self):
         self.mock_vllm_config = MagicMock()
         self.mock_vllm_config.speculative_config = None
