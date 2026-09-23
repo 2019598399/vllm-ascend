@@ -13,6 +13,11 @@ from vllm_ascend.device.device_config import get_device_config
 from vllm_ascend.device.hardware import AscendDeviceType
 
 
+# Temporary policy used until a hardware profile receives an NPU benchmarked
+# crossover point. Keep this at the profile layer rather than in vLLM config.
+_SP_MIN_ACTIVATION_BYTES_PER_RANK_FALLBACK = 8 * 1024 * 1024
+
+
 class HardwareCapability(Enum):
     """Independent SoC capabilities consumed by shared business logic."""
 
@@ -128,11 +133,33 @@ class HardwareProfile:
     moe_comm_policy: MoECommPolicy
     quantization_backend_family: QuantizationBackendFamily
     capabilities: frozenset[HardwareCapability]
+    # Set after an NPU benchmark establishes the SP/MMRS crossover point.
+    # ``None`` deliberately selects the documented temporary fallback.
+    sp_min_activation_bytes_per_rank: int | None = None
 
     def supports(self, capability: HardwareCapability) -> bool:
         """Return whether this hardware family provides ``capability``."""
 
         return capability in self.capabilities
+
+    def sequence_parallelism_min_token_num(
+        self,
+        hidden_size: int,
+        tp_size: int,
+        element_size: int,
+    ) -> int:
+        """Return the SP threshold from this profile's calibrated policy.
+
+        The threshold is expressed in tokens, while calibration is stored as
+        the minimum activation bytes per TP rank. This keeps one policy useful
+        for different hidden sizes, dtypes, and tensor-parallel sizes.
+        """
+        assert hidden_size > 0 and tp_size > 0 and element_size > 0
+        activation_bytes = self.sp_min_activation_bytes_per_rank
+        if activation_bytes is None:
+            activation_bytes = _SP_MIN_ACTIVATION_BYTES_PER_RANK_FALLBACK
+        assert activation_bytes > 0
+        return max(1, activation_bytes * tp_size // (hidden_size * element_size))
 
 
 _STANDARD_CAPABILITIES = frozenset(

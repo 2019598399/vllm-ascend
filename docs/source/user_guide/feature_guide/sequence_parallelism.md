@@ -64,6 +64,10 @@ vllm serve <moe-model> \
 
 Fusion applies only to BF16/FP16 bias-free projections with TP size 2, 4, or
 8 and a supported contracted dimension. Other graphs retain the unfused path.
+When SP/MMRS is enabled, Ascend derives its default token threshold from the
+hardware profile; profiles without a benchmarked value temporarily use an
+8 MiB-per-TP-rank policy. Set `pass_config.sp_min_token_num` explicitly to
+override that policy for a deployment.
 To verify a real workload without a model-specific reproducer, set
 `VLLM_DEBUG_DUMP_PATH` and check the emitted FX graph for
 `vllm.npu_matmul_reduce_scatter`; Ascend profiling then shows the corresponding

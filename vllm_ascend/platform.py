@@ -336,12 +336,19 @@ class NPUPlatform(Platform):
     def apply_config_platform_defaults(cls, vllm_config: VllmConfig) -> None:
         """Apply Ascend-specific defaults."""
 
-        # Upstream derives this threshold only for CUDA/XPU. Without an Ascend
-        # default an explicit SP/fuse_gemm_comms request is disabled during
-        # VllmConfig validation before our graph pass can see it.
+        # Upstream derives this threshold only for CUDA/XPU. Ascend keeps the
+        # user value when supplied; otherwise the hardware profile provides a
+        # calibrated policy, or its temporary 8 MiB fallback.
         pass_config = vllm_config.compilation_config.pass_config
         if (pass_config.enable_sp or pass_config.fuse_gemm_comms) and pass_config.sp_min_token_num is None:
-            pass_config.sp_min_token_num = 1
+            model_config = vllm_config.model_config
+            if model_config is not None:
+                assert isinstance(model_config.dtype, torch.dtype)
+                pass_config.sp_min_token_num = get_current_hardware_profile().sequence_parallelism_min_token_num(
+                    model_config.get_hidden_size(),
+                    vllm_config.parallel_config.tensor_parallel_size,
+                    model_config.dtype.itemsize,
+                )
 
         default_max_cg_capture_size = _get_default_max_cudagraph_capture_size(vllm_config)
         if default_max_cg_capture_size is not None:

@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 # Copyright (c) 2026 Huawei Technologies Co., Ltd. All Rights Reserved.
 
+from dataclasses import replace
 from typing import cast
 
 import pytest
@@ -29,17 +30,17 @@ _STANDARD_CAPABILITIES = frozenset(
         HardwareCapability.ATB_WARMUP,
         HardwareCapability.BGMV_SGMV_META_REGISTRATION,
         HardwareCapability.FUSED_SWIGLU_TUNING_ARGS,
+        HardwareCapability.GRAPH_MM_REDUCE_SCATTER_FUSION,
         HardwareCapability.GRAPH_MULS_ADD_FUSION,
         HardwareCapability.GRAPH_NORM_QUANT_FUSION,
         HardwareCapability.INPLACE_PARTIAL_ROTARY_MUL_NEGATE_SIN,
         HardwareCapability.IRQ_CPU_RESERVATION,
         HardwareCapability.LORA_CUSTOM_OPS,
         HardwareCapability.MC2_HIERARCHY_COMM,
-        HardwareCapability.MOE_GATING_TOP_K_HASH_VISION,
         HardwareCapability.NPUGRAPH_EX,
         HardwareCapability.PAGED_ATTENTION,
         HardwareCapability.RUNTIME_CUSTOM_OPS,
-        HardwareCapability.SFA_C8_DCP_REPLICATED_INDEXER,
+        HardwareCapability.SFA_DCP_REPLICATED_INDEXER,
         HardwareCapability.STANDARD_MAMBA_PATCH,
         HardwareCapability.STANDARD_WORKER_PATCHES,
         HardwareCapability.TRITON_BATCH_MEMCPY,
@@ -81,6 +82,7 @@ _EXPECTED_CAPABILITIES = {
             HardwareCapability.DYNAMIC_MX_QUANT_FUSION,
             HardwareCapability.DYNAMIC_MX_QUANT_SCALE_ALG_ONE,
             HardwareCapability.FP8_ATTENTION,
+            HardwareCapability.GRAPH_MM_REDUCE_SCATTER_FUSION,
             HardwareCapability.GRAPH_MULS_ADD_FUSION,
             HardwareCapability.GRAPH_NORM_QUANT_FUSION,
             HardwareCapability.LOCAL_KV_COMM_RESOURCE,
@@ -229,3 +231,13 @@ def test_unknown_device_type_is_rejected() -> None:
 def test_every_device_type_has_a_profile() -> None:
     for device_type in AscendDeviceType:
         assert get_hardware_profile(device_type)._device_type is device_type
+
+
+def test_sequence_parallelism_threshold_uses_fallback_then_calibration() -> None:
+    profile = get_hardware_profile(AscendDeviceType.A3)
+    # 8 MiB * TP2 / (hidden_size 8192 * BF16 2 bytes).
+    assert profile.sequence_parallelism_min_token_num(8192, 2, 2) == 1024
+
+    calibrated = replace(profile, sp_min_activation_bytes_per_rank=16 * 1024 * 1024)
+    assert calibrated.sequence_parallelism_min_token_num(8192, 2, 2) == 2048
+    assert calibrated.sequence_parallelism_min_token_num(8192, 2, 4) == 1024
