@@ -254,6 +254,27 @@ def test_sequence_parallelism_threshold_uses_model_class_fallbacks_then_calibrat
 
 
 @pytest.mark.parametrize(
+    ("dtype", "hidden_size", "tp_size", "expected"),
+    [
+        (torch.bfloat16, 4096, 2, 2048),
+        (torch.float16, 8192, 4, 2048),
+        (torch.bfloat16, 12288, 8, 2730),
+    ],
+)
+def test_sequence_parallelism_moe_fallback_uses_activation_bytes_per_rank(
+    dtype: torch.dtype,
+    hidden_size: int,
+    tp_size: int,
+    expected: int,
+) -> None:
+    profile = get_hardware_profile(AscendDeviceType.A3)
+
+    assert profile.sequence_parallelism_min_token_num(
+        hidden_size, tp_size, dtype.itemsize, is_moe=True
+    ) == expected
+
+
+@pytest.mark.parametrize(
     "policy",
     [
         SequenceParallelismThresholdPolicy(),
